@@ -1,0 +1,18 @@
+Row 3 Analysis (Hybrid) - DroneVehicle (Fixed Coords)
+Config: {'default_sigma': 4096, 'down_sample': 2, 'thres_default': [0.95, 0.05], 'thres_override': [], 'square_cls': [], 'post_process': {}}
+Loading model...
+Loads checkpoint by local backend from path: /mnt/data/liurunxiang/workplace/point2rbox-v2-loss1/work_dirs/dv/1/std0.1/epoch_12.pth
+Randomly sampling 100 images...
+Starting Analysis...
+
+=====================================================================================
+Class              | mIoU     | mSize    | mAngle(°)  | Count 
+-------------------------------------------------------------------------------------
+car                | 0.3512   | 0.3740   | 40.54       | 1213  
+bus                | 0.6695   | 0.6689   | 53.44       | 55    
+truck              | 0.5504   | 0.5689   | 55.14       | 68    
+van                | 0.3623   | 0.3653   | 42.97       | 33    
+freight_car        | 0.4861   | 0.5034   | 43.11       | 31    
+-------------------------------------------------------------------------------------
+OVERALL | mIoU: 0.3766 | mSize: 0.3977 | mAngle: 41.87°
+=====================================================================================

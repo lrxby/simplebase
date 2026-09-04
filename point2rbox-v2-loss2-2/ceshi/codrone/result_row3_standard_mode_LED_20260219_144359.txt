@@ -1,0 +1,2 @@
+Row 3 Analysis (Standard Mode + Pred Angle + LED Fixed) - CoDrone
+Loads checkpoint by local backend from path: /mnt/data/liurunxiang/workplace/point2rbox-v2-loss2-2/work_dirs/cd/std0.1/e2e/epoch_4.pth

@@ -1,0 +1,18 @@
+Logging results to: ceshi/dronevehicle/result_row3_drone_train_20260214_221858.txt
+Time: 2026-02-14 22:18:58.193474
+Loading model from /mnt/data/liurunxiang/workplace/point2rbox-v2-loss1/work_dirs/dv/1/std0.1/epoch_12.pth...
+Loads checkpoint by local backend from path: /mnt/data/liurunxiang/workplace/point2rbox-v2-loss1/work_dirs/dv/1/std0.1/epoch_12.pth
+Loading ALL 17990 images from training set...
+Starting HYBRID Analysis (DroneVehicle Training Set)...
+
+=====================================================================================
+Class              | mIoU     | mSize    | mAngle(°)  | Count 
+-------------------------------------------------------------------------------------
+car                | 0.3099   | 0.2962   | 44.97       | 246698
+bus                | 0.4307   | 0.4140   | 43.57       | 10421 
+truck              | 0.2909   | 0.2774   | 45.32       | 13684 
+van                | 0.6065   | 0.6232   | 42.66       | 7275  
+freight_car        | 0.5484   | 0.5523   | 43.78       | 8711  
+-------------------------------------------------------------------------------------
+OVERALL | mIoU: 0.3282 | mSize: 0.3156 | mAngle: 44.84°
+=====================================================================================

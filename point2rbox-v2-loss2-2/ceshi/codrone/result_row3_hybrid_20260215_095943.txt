@@ -1,0 +1,4 @@
+Row 3 Analysis (Hybrid) - CoDrone
+Config: {'default_sigma': 2048, 'down_sample': 2, 'thres_default': [0.97, 0.05], 'thres_override': [], 'square_cls': [1, 9, 5], 'post_process': {11: 1.3, 6: 1.2}}
+Loading model...
+Loads checkpoint by local backend from path: /mnt/data/liurunxiang/workplace/point2rbox-v2/work_dirs/1/codrone/e2e/epoch_12.pth

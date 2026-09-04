@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Train Project (Debug)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/train.py", // 1. 入口点：始终指向 train.py
+            "console": "integratedTerminal",
+            "args": [
+                "configs/point2rbox/point2rbox_v2_1x_dota.py", // 2. 参数：你的配置文件路径
+                "--work-dir", "work_dirs/debug_run"           // 3. 参数：输出目录
+            ],
+            "cwd": "${workspaceFolder}", // 确保工作目录在项目根目录
+            "justMyCode": false,         // 设为 false，可以追踪进入库函数（如 mmengine 内部）
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0", // 调试建议只用单卡
+                "PYTHONPATH": "${workspaceFolder}" // 确保能找到项目模块
+            }
+        }
+    ]
+}

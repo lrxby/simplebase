@@ -1,0 +1,26 @@
+Row 3 Analysis (Hybrid) - CoDrone
+Config: {'default_sigma': 2048, 'down_sample': 2, 'thres_default': [0.97, 0.05], 'thres_override': [], 'square_cls': [1, 9, 5], 'post_process': {11: 1.3, 6: 1.2}}
+Loading model...
+Loads checkpoint by local backend from path: /mnt/data/liurunxiang/workplace/point2rbox-v2-loss2-2/work_dirs/cd/std0.1/e2e/epoch_4.pth
+Loading ALL 105030 images...
+Starting Analysis...
+
+=====================================================================================
+Class              | mIoU     | mSize    | mAngle(°)  | Count 
+-------------------------------------------------------------------------------------
+car                | 0.5762   | 0.5996   | 44.60       | 273293
+truck              | 0.5456   | 0.5731   | 0.00       | 29161 
+bus                | 0.5377   | 0.5585   | 49.32       | 5511  
+traffic-light      | 0.3139   | 0.3335   | 53.41       | 7910  
+traffic-sign       | 0.4330   | 0.4503   | 42.70       | 12894 
+bridge             | 0.1790   | 0.1854   | 0.00       | 362   
+people             | 0.2956   | 0.3115   | 53.91       | 99420 
+bicycle            | 0.4503   | 0.4791   | 47.21       | 5194  
+motor              | 0.4333   | 0.4562   | 47.29       | 96498 
+tricycle           | 0.5277   | 0.5542   | 0.00       | 3693  
+boat               | 0.5586   | 0.5887   | 43.78       | 8117  
+ship               | 0.4027   | 0.4255   | 47.49       | 462   
+-------------------------------------------------------------------------------------
+OVERALL | mIoU: 0.4879 | mSize: 0.5100 | mAngle: 44.20°
+=====================================================================================
+Results saved to ceshi/codrone/result_row3_hybrid_20260215_120957.txt

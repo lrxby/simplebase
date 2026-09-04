@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Train (MMRotate)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/train.py", 
+            "python": "/home/liurunxiang/anaconda3/envs/PR2/bin/python",
+            "args": [
+                "configs/point2rbox_v2/point2rbox_v2-1x-dota.py"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            }
+        }
+    ]
+}
