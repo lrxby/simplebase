@@ -142,7 +142,8 @@ train_pipeline = [
     # === [关键插入] 加载离线生成的伪标签 ===
     # 请务必修改 pkl_path 为您实际生成的路径
     dict(type='LoadPseudoAnnotations', 
-         pkl_path='/mnt/data/xiekaikai/split_ss_dota/trainval/trainval-ori-pca.pkl'),
+        #  pkl_path='/mnt/data/xiekaikai/split_ss_dota/trainval/trainval-ori-pca.pkl'),
+        pkl_path='/mnt/data/liurunxiang/dataset/split_ss_dota/trainval/dota1-rect.pkl'),
     # ========================================
 
     dict(type='ConvertBoxType', box_type_mapping=dict(gt_bboxes='rbox')),

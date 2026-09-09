@@ -110,24 +110,3 @@ optim_wrapper = dict(
 
 train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=12, val_interval=1)
 custom_hooks = [dict(type='mmdet.SetEpochInfoHook')]
-
-# # =======================================================
-# # [新增] 切换测试阶段为 Validation 集，并要求直接计算 mAP
-# # =======================================================
-# test_dataloader = dict(
-#     batch_size=16,
-#     num_workers=2,
-#     persistent_workers=True,
-#     drop_last=False,
-#     sampler=dict(type='DefaultSampler', shuffle=False),
-#     dataset=dict(
-#         type='DOTADataset',
-#         data_root='/mnt/data/xiekaikai/split_ss_dotav1.5/',
-#         # 👇 关键：把路径指向你的验证集！
-#         ann_file='trainval/annfiles/',         # 验证集的标签路径
-#         data_prefix=dict(img_path='trainval/images/'), # 验证集的图片路径
-#         test_mode=True,
-#         pipeline=_base_.test_pipeline))
-
-# # 👇 关键：关掉 format_only，要求直接计算并打印 mAP
-# test_evaluator = dict(type='DOTAMetric', metric='mAP')

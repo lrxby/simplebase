@@ -30,7 +30,7 @@ ln -s path/to/split_ss_dota data
 We can train/test/visualize the Point2RBox-v2 model by:
 ```shell
 # train
-python tools/train.py configs/point2rbox_v2/point2rbox_v2-1x-dota.py
+CUDA_VISIBLE_DEVICES=1 python tools/train.py configs/point2rbox_v2/point2rbox_v2-1x-dota.py --work-dir work_dirs/sb/dt1/pca/1
 python tools/train.py configs/point2rbox_v2/point2rbox_v2-1x-dota1.5.py
 python tools/train.py configs/point2rbox_v2/point2rbox_v2-1x-dota2.py
 python tools/train.py configs/point2rbox_v2/point2rbox_v2-1x-dronevehicle.py
