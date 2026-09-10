@@ -2,7 +2,8 @@
 # 1. 引入自定义 Pipeline (必须，否则找不到 LoadPseudoAnnotations)
 # ---------------------------------------------------------------
 custom_imports = dict(
-    imports=['mmrotate.datasets.transforms.loading_pseudo'], 
+    imports=['mmrotate.datasets.transforms.loading_pseudo',
+         'mmrotate.engine.hooks.loss_warmup_hook'], 
     allow_failed_imports=False
 )
 
@@ -12,7 +13,7 @@ _base_ = [
 ]
 angle_version = 'le90'
 
-randomness = dict(seed=0, deterministic=False)
+randomness = dict(seed=1, deterministic=False)
 
 # model settings
 model = dict(
@@ -119,6 +120,7 @@ model = dict(
             k_radius=2.0,
             score_alpha=1.0,
             topk=0.95,
+            warmup_epochs=2,
             target_classes=[0,4,5,6,7,8,10,12,14]
         )
     ),
@@ -178,7 +180,7 @@ optim_wrapper = dict(
         betas=(0.9, 0.999),
         weight_decay=0.05))
 
-custom_hooks = [dict(type='mmdet.SetEpochInfoHook')]
+custom_hooks = [dict(type='mmdet.SetEpochInfoHook'), dict(type='LossWarmupHook')]
 
 train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=12, val_interval=1)
 
@@ -193,10 +195,10 @@ test_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTADataset',
-        data_root='/mnt/data/liurunxiang/dataset/split_ss_dota/',
+        data_root='/mnt/data/xiekaikai/dota/',
         # 👇 关键：把路径指向你的验证集！
-        ann_file='trainval/labelTxt/',         # 验证集的标签路径
-        data_prefix=dict(img_path='trainval/images/'), # 验证集的图片路径
+        ann_file='val/labelTxt/',         # 验证集的标签路径
+        data_prefix=dict(img_path='val/images/'), # 验证集的图片路径
         test_mode=True,
         pipeline=_base_.test_pipeline))
 

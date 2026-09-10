@@ -174,7 +174,7 @@ optim_wrapper = dict(
     optimizer=dict(
         _delete_=True,
         type='AdamW',
-        lr=0.00005,
+        lr=1e-05,
         betas=(0.9, 0.999),
         weight_decay=0.05))
 
@@ -193,10 +193,10 @@ test_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTADataset',
-        data_root='/mnt/data/liurunxiang/dataset/split_ss_dota/',
+        data_root='/mnt/data/xiekaikai/dota/',
         # 👇 关键：把路径指向你的验证集！
-        ann_file='trainval/labelTxt/',         # 验证集的标签路径
-        data_prefix=dict(img_path='trainval/images/'), # 验证集的图片路径
+        ann_file='val/labelTxt/',         # 验证集的标签路径
+        data_prefix=dict(img_path='val/images/'), # 验证集的图片路径
         test_mode=True,
         pipeline=_base_.test_pipeline))
 

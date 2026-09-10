@@ -193,12 +193,19 @@ test_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTADataset',
-        data_root='/mnt/data/liurunxiang/dataset/split_ss_dota/',
+        data_root='/mnt/data/xiekaikai/dota/',
         # 👇 关键：把路径指向你的验证集！
-        ann_file='trainval/labelTxt/',         # 验证集的标签路径
-        data_prefix=dict(img_path='trainval/images/'), # 验证集的图片路径
+        ann_file='val/labelTxt/',         # 验证集的标签路径
+        data_prefix=dict(img_path='val/images/'), # 验证集的图片路径
         test_mode=True,
         pipeline=_base_.test_pipeline))
 
 # 👇 关键：关掉 format_only，要求直接计算并打印 mAP
 test_evaluator = dict(type='DOTAMetric', metric='mAP')
+# ============ [新增] lr 衰减 schedule (对齐原版 Point2RBox-v2) ============
+param_scheduler = [
+    dict(type='LinearLR', start_factor=1.0 / 3, by_epoch=False,
+         begin=0, end=500),
+    dict(type='MultiStepLR', begin=0, end=12,
+         by_epoch=True, milestones=[8, 11], gamma=0.1)
+]

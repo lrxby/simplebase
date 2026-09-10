@@ -804,7 +804,8 @@ class AngleLoss(nn.Module):
                  score_alpha=1.0,
                  target_classes=None,
                  reduction='mean',
-                 topk=1.0):
+                 topk=1.0,
+                 warmup_epochs=0):
         super(AngleLoss, self).__init__()
         self.loss_weight = loss_weight
         self.k_radius = k_radius
@@ -812,6 +813,8 @@ class AngleLoss(nn.Module):
         self.target_classes = target_classes
         self.reduction = reduction
         self.topk = topk
+        self.warmup_epochs = warmup_epochs
+        self.current_epoch = 0
 
     def _forward_single_image(self, bboxes, scores, labels, gt_ids=None):
         N = bboxes.shape[0]
@@ -937,13 +940,21 @@ class AngleLoss(nn.Module):
             total_loss += loss_sum
             total_valid_samples += valid_count
 
+        # Warmup: linearly increase loss weight over first warmup_epochs
+        # If warmup_epochs == 0, warmup is disabled (full weight from start)
+        if self.warmup_epochs > 0:
+            warmup_w = min(1.0, (self.current_epoch + 1) / self.warmup_epochs)
+        else:
+            warmup_w = 1.0
+        effective_weight = warmup_w * self.loss_weight
+
         if self.reduction == 'mean':
             if total_valid_samples > 0:
-                return self.loss_weight * total_loss / total_valid_samples
+                return effective_weight * total_loss / total_valid_samples
             else:
                 return pos_bbox_preds.sum() * 0.0
         else:
-            return self.loss_weight * total_loss
+            return effective_weight * total_loss
 
 @MODELS.register_module()
 class OurWaterLoss(nn.Module):

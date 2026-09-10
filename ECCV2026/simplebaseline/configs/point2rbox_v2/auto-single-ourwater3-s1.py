@@ -12,7 +12,7 @@ _base_ = [
 ]
 angle_version = 'le90'
 
-randomness = dict(seed=0, deterministic=False)
+randomness = dict(seed=1, deterministic=False)
 
 # model settings
 model = dict(
@@ -100,7 +100,7 @@ model = dict(
         # 3. 离线伪标签监督 (OurWater - Row 5/6) [新增]
         loss_ourwater=dict(
             type='OurWaterLoss',
-            loss_weight=1.0
+            loss_weight=3.0
         ),
 
         # 4. 上界/透视约束 (Size)

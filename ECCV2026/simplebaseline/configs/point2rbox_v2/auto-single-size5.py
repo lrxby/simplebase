@@ -106,7 +106,7 @@ model = dict(
         # 4. 上界/透视约束 (Size)
         loss_size=dict(
             type='SizeLoss', 
-            loss_weight=1.0, 
+            loss_weight=5.0, 
             beta=1.0,
             topk=0.95,
             target_classes=[0,1,4,7,8,9,10,11,14]
@@ -193,10 +193,10 @@ test_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type='DOTADataset',
-        data_root='/mnt/data/liurunxiang/dataset/split_ss_dota/',
+        data_root='/mnt/data/xiekaikai/dota/',
         # 👇 关键：把路径指向你的验证集！
-        ann_file='trainval/labelTxt/',         # 验证集的标签路径
-        data_prefix=dict(img_path='trainval/images/'), # 验证集的图片路径
+        ann_file='val/labelTxt/',         # 验证集的标签路径
+        data_prefix=dict(img_path='val/images/'), # 验证集的图片路径
         test_mode=True,
         pipeline=_base_.test_pipeline))
 
