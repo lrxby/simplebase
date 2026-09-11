@@ -192,6 +192,7 @@ class Point2RBoxV2Head(AnchorFreeHead):
         
         # --- Step 0: Extract Pseudo Labels ---
         batch_pseudo_boxes = []
+        batch_pseudo_valid = []
         if batch_data_samples is not None:
             for data_sample in batch_data_samples:
                 if hasattr(data_sample, 'pseudo_boxes'):
@@ -200,8 +201,22 @@ class Point2RBoxV2Head(AnchorFreeHead):
                         batch_pseudo_boxes.append(p_box)
                     else:
                         batch_pseudo_boxes.append(torch.tensor(p_box, device=bbox_preds[0].device))
+                    # pseudo_valid: 与 GT 对齐的布尔掩码 (loader 已按类别+顺序对齐)
+                    if hasattr(data_sample, 'pseudo_valid'):
+                        pv = data_sample.pseudo_valid
+                        if isinstance(pv, torch.Tensor):
+                            batch_pseudo_valid.append(pv.to(device=bbox_preds[0].device))
+                        else:
+                            batch_pseudo_valid.append(
+                                torch.tensor(pv, dtype=torch.bool, device=bbox_preds[0].device))
+                    else:
+                        # 无掩码 (旧 pkl 路径): 默认全有效
+                        n = p_box.shape[0] if hasattr(p_box, 'shape') else len(p_box)
+                        batch_pseudo_valid.append(
+                            torch.ones(n, dtype=torch.bool, device=bbox_preds[0].device))
                 else:
                     batch_pseudo_boxes.append(None)
+                    batch_pseudo_valid.append(None)
         
         # --- Step 1: Pre-processing (Anchors/Targets) ---
         assert len(cls_scores) == len(bbox_preds) == len(angle_preds)
@@ -212,8 +227,9 @@ class Point2RBoxV2Head(AnchorFreeHead):
             device=bbox_preds[0].device)
         
         # [修改 1] 接收 get_targets 返回的 5 个值，包括 gt_inds
-        labels, bbox_targets, bid_targets, pseudo_targets, gt_inds = self.get_targets(
-            all_level_points, batch_gt_instances, batch_pseudo_boxes=batch_pseudo_boxes)
+        labels, bbox_targets, bid_targets, pseudo_targets, pseudo_valids, gt_inds = self.get_targets(
+            all_level_points, batch_gt_instances, batch_pseudo_boxes=batch_pseudo_boxes,
+            batch_pseudo_valid=batch_pseudo_valid)
 
         num_imgs = cls_scores[0].size(0)
         
@@ -238,6 +254,7 @@ class Point2RBoxV2Head(AnchorFreeHead):
         flatten_bid_targets = torch.cat(bid_targets)
         # [新增] Flatten Pseudo Targets
         flatten_pseudo_targets = torch.cat(pseudo_targets)
+        flatten_pseudo_valids = torch.cat(pseudo_valids)
         # [修改 2] Flatten GT Inds
         flatten_gt_inds = torch.cat(gt_inds)
         
@@ -267,6 +284,7 @@ class Point2RBoxV2Head(AnchorFreeHead):
         
         # [新增] 正样本对应的伪标签
         pos_pseudo_targets = flatten_pseudo_targets[pos_inds]
+        pos_pseudo_valids = flatten_pseudo_valids[pos_inds]
         # [修改 3] 筛选出正样本的 GT ID
         pos_gt_ids = flatten_gt_inds[pos_inds]
 
@@ -386,12 +404,17 @@ class Point2RBoxV2Head(AnchorFreeHead):
                     pos_gt_ids=pos_gt_ids # [修改 4] 传递正样本 GT ID
                 )
             
-            # [OurWaterLoss 计算]
+            # [OurWaterLoss 计算] 仅对有效伪标签实例监督
             if self.use_ourwater_loss:
-                val_loss_ourwater = self.loss_ourwater(
-                    pos_rbox_preds, 
-                    pos_pseudo_targets.detach()
-                )
+                valid_mask = pos_pseudo_valids
+                if valid_mask.any():
+                    val_loss_ourwater = self.loss_ourwater(
+                        pos_rbox_preds[valid_mask],
+                        pos_pseudo_targets[valid_mask].detach()
+                    )
+                else:
+                    # 无有效伪标签: 返回与预测计算图连接的零损失
+                    val_loss_ourwater = pos_bbox_preds.sum() * 0
 
         losses = dict(loss_cls=loss_cls)
 
@@ -416,8 +439,9 @@ class Point2RBoxV2Head(AnchorFreeHead):
         self, 
         points: List[Tensor], 
         batch_gt_instances: InstanceList,
-        batch_pseudo_boxes: List[Tensor] = None 
-    ) -> Tuple[List[Tensor], List[Tensor], List[Tensor], List[Tensor], List[Tensor]]: # [修改 5] 返回值类型注解增加
+        batch_pseudo_boxes: List[Tensor] = None,
+        batch_pseudo_valid: List[Tensor] = None
+    ) -> Tuple[List[Tensor], List[Tensor], List[Tensor], List[Tensor], List[Tensor], List[Tensor]]: # [修改 5] 返回值类型注解增加
         assert len(points) == len(self.regress_ranges)
         num_levels = len(points)
         expanded_regress_ranges = [
@@ -431,12 +455,15 @@ class Point2RBoxV2Head(AnchorFreeHead):
         # 确保列表长度对齐，避免 multi_apply 出错
         if batch_pseudo_boxes is None or len(batch_pseudo_boxes) == 0:
             batch_pseudo_boxes = [None] * len(batch_gt_instances)
+        if batch_pseudo_valid is None or len(batch_pseudo_valid) == 0:
+            batch_pseudo_valid = [None] * len(batch_gt_instances)
 
-        # [修改 6] 接收第 5 个返回值 gt_inds_list
-        labels_list, bbox_targets_list, bid_targets_list, pseudo_targets_list, gt_inds_list = multi_apply(
+        # [修改 6] 接收第 5、6 个返回值 gt_inds_list / pseudo_valid_list
+        labels_list, bbox_targets_list, bid_targets_list, pseudo_targets_list, pseudo_valid_list, gt_inds_list = multi_apply(
             self._get_targets_single,
             batch_gt_instances,
             batch_pseudo_boxes,
+            batch_pseudo_valid,
             points=concat_points,
             regress_ranges=concat_regress_ranges,
             num_points_per_lvl=num_points)
@@ -454,6 +481,10 @@ class Point2RBoxV2Head(AnchorFreeHead):
             pseudo_targets.split(num_points, 0)
             for pseudo_targets in pseudo_targets_list
         ]
+        pseudo_valid_list = [
+            pseudo_valid.split(num_points, 0)
+            for pseudo_valid in pseudo_valid_list
+        ]
         # [修改 7] 对 gt_inds_list 进行 split
         gt_inds_list = [
             gt_inds.split(num_points, 0)
@@ -464,6 +495,7 @@ class Point2RBoxV2Head(AnchorFreeHead):
         concat_lvl_bbox_targets = []
         concat_lvl_bid_targets = []
         concat_lvl_pseudo_targets = [] 
+        concat_lvl_pseudo_valid = []  # [修复] 初始化
         concat_lvl_gt_inds = [] # [修改 8] 初始化
         
         for i in range(num_levels):
@@ -475,6 +507,8 @@ class Point2RBoxV2Head(AnchorFreeHead):
                 [bid_targets[i] for bid_targets in bid_targets_list])
             pseudo_targets = torch.cat(
                 [pseudo_targets[i] for pseudo_targets in pseudo_targets_list])
+            pseudo_valid = torch.cat(
+                [pseudo_valid[i] for pseudo_valid in pseudo_valid_list])
             # [修改 9] 拼接 gt_inds
             gt_inds = torch.cat(
                 [gt_inds[i] for gt_inds in gt_inds_list])
@@ -482,19 +516,22 @@ class Point2RBoxV2Head(AnchorFreeHead):
             concat_lvl_bbox_targets.append(bbox_targets)
             concat_lvl_bid_targets.append(bid_targets)
             concat_lvl_pseudo_targets.append(pseudo_targets)
+            concat_lvl_pseudo_valid.append(pseudo_valid)
             concat_lvl_gt_inds.append(gt_inds)
             
-        # [修改 10] 返回 gt_inds
+        # [修改 10] 返回 gt_inds 与 pseudo_valid
         return (concat_lvl_labels, concat_lvl_bbox_targets,
-                concat_lvl_bid_targets, concat_lvl_pseudo_targets, concat_lvl_gt_inds)
+                concat_lvl_bid_targets, concat_lvl_pseudo_targets,
+                concat_lvl_pseudo_valid, concat_lvl_gt_inds)
 
     def _get_targets_single(
             self, 
             gt_instances: InstanceData, 
             pseudo_boxes: Optional[Tensor], 
+            pseudo_valid: Optional[Tensor],
             points: Tensor,
             regress_ranges: Tensor,
-            num_points_per_lvl: List[int]) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]: # [修改 11] 类型注解
+            num_points_per_lvl: List[int]) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]: # [修改 11] 类型注解
         
         num_points = points.size(0)
         num_gts = len(gt_instances)
@@ -503,11 +540,12 @@ class Point2RBoxV2Head(AnchorFreeHead):
         gt_bids = gt_instances.bids
 
         if num_gts == 0:
-            # [修改 12] 返回空的 gt_inds
+            # [修改 12] 返回空的 gt_inds 与 pseudo_valid
             return gt_labels.new_full((num_points,), self.num_classes), \
                    gt_bboxes.new_zeros((num_points, 5)), \
                    gt_bids.new_zeros((num_points, 4)), \
                    points.new_zeros((num_points, 5)), \
+                   points.new_zeros((num_points,), dtype=torch.bool), \
                    gt_labels.new_full((num_points,), -1, dtype=torch.long) # GT ID 默认为 -1
 
         areas = gt_bboxes.areas
@@ -567,22 +605,39 @@ class Point2RBoxV2Head(AnchorFreeHead):
         valid_pos_mask = (min_area != INF)
         gt_inds[valid_pos_mask] = min_area_inds[valid_pos_mask]
         
-        # [Pseudo Target Assignment]
+        # [Pseudo Target Assignment] 修复: 不静默 clamp 错配
+        # pseudo_boxes 已由 loader 按类别+顺序与 GT 对齐 (len == num_gts)。
+        # 越界索引视为该实例无有效伪框 (valid=False)，绝不悄悄匹配到别的实例。
         point_pseudo_targets = points.new_zeros((num_points, 5))
+        point_pseudo_valid = points.new_zeros((num_points,), dtype=torch.bool)
         if pseudo_boxes is not None and len(pseudo_boxes) > 0:
             # Mask for valid assignments (not background)
             valid_mask = (min_area != INF)
             
-            # Safe indices
+            # GT 相对索引 (0 ~ num_gts-1)
             valid_inds = min_area_inds[valid_mask]
-            # Ensure indices do not exceed bounds (safety clamp)
-            valid_inds = valid_inds.clamp(0, len(pseudo_boxes) - 1)
-            
-            # Assign
-            point_pseudo_targets[valid_mask] = pseudo_boxes[valid_inds]
+            # 越界防御: 不静默 clamp 匹配; 越界实例视为无有效伪框
+            in_bounds = valid_inds < len(pseudo_boxes)
+            # 有效掩码: 先检查索引边界, 再叠加 loader 的 pseudo_valid
+            ok = in_bounds.clone()
+            if pseudo_valid is not None and len(pseudo_valid) > 0:
+                pv = pseudo_valid
+                if not isinstance(pv, torch.Tensor):
+                    pv = torch.tensor(pv, dtype=torch.bool, device=points.device)
+                else:
+                    pv = pv.to(device=points.device)
+                if len(pv) > 0:
+                    ok = ok.clone()
+                    ok[in_bounds] = pv[valid_inds[in_bounds].clamp(max=len(pv) - 1)]
+            # Assign: 只给有效点赋真实伪框, 无效点保持 0 (valid=False, 不进 ourwater)
+            idx = valid_inds[ok]
+            assign_pos = torch.zeros(num_points, dtype=torch.bool, device=points.device)
+            assign_pos[valid_mask] = ok
+            point_pseudo_targets[assign_pos] = pseudo_boxes[idx]
+            point_pseudo_valid[valid_mask] = ok
 
-        # [修改 14] 返回 gt_inds
-        return labels, bbox_targets, bid_targets, point_pseudo_targets, gt_inds
+        # [修改 14] 返回 gt_inds 与 pseudo_valid
+        return labels, bbox_targets, bid_targets, point_pseudo_targets, point_pseudo_valid, gt_inds
 
     def predict(self,
                 x: Tuple[Tensor],

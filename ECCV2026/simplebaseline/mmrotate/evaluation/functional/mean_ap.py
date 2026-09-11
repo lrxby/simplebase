@@ -238,7 +238,7 @@ def print_map_summary(mean_ap,
 
     # [MODIFIED] 动态构建表头
     header = ['class', 'gts', 'dets', 'recall', 'ap']
-    extra_keys = ['mIoU', 'mAngle', 'mSize']
+    extra_keys = ['mIoU', 'mAngle', 'mAngle_longedge', 'mSize', 'mAngle_le_slim']
     present_extras = [k for k in extra_keys if k in results[0]]
     header.extend(present_extras)
 
@@ -252,29 +252,35 @@ def print_map_summary(mean_ap,
                 f'{recalls[i, j]:.3f}', f'{aps[i, j]:.3f}'
             ]
             
-            # [MODIFIED] 填充类别行数据
+            # [MODIFIED] 填充类别行数据 (N/A 时原样显示)
             for k in present_extras:
-                row_data.append(f"{results[j][k]:.3f}")
+                v = results[j].get(k, 'N/A')
+                if isinstance(v, (int, float)):
+                    row_data.append(f"{v:.3f}")
+                else:
+                    row_data.append(str(v))
                 
             table_data.append(row_data)
         
         # [MODIFIED] 填充页脚（均值行）
         footer = ['mAP', '', '', '', f'{mean_ap[i]:.3f}']
         for k in present_extras:
-            # 过滤无效值：只计算 num_gts > 0 且 mIoU > 0 的类别
-            # 注意：用 mIoU > 0 来判断该类是否有 TP 是最稳妥的，因为 TP 的 IoU 必 >= 0.5
+            # 过滤无效值：只计算 num_gts > 0 且有 TP 的类别
             valid_values = []
             for j in range(num_classes):
-                # 检查该类是否有 TP (mIoU > 0 表示有 TP，mIoU == 0 表示无 TP 或未定义)
-                # 即使对于 mAngle 和 mSize，如果没有 TP，它们也是 0，不应计入平均
-                has_tp = results[j].get('mIoU', 0) > 0
-                
-                if k in results[j] and results[j]['num_gts'] > 0 and has_tp:
-                    valid_values.append(results[j][k])
+                mIoU_v = results[j].get('mIoU', 0)
+                has_tp = isinstance(mIoU_v, (int, float)) and mIoU_v > 0
+                v = results[j].get(k)
+                if (results[j]['num_gts'] > 0 and has_tp
+                        and isinstance(v, (int, float))):
+                    valid_values.append(v)
             
             # 计算有效类别的平均值
-            avg_val = np.mean(valid_values) if valid_values else 0.0
-            footer.append(f'{avg_val:.3f}')
+            avg_val = np.mean(valid_values) if valid_values else 'N/A'
+            if isinstance(avg_val, float):
+                footer.append(f'{avg_val:.3f}')
+            else:
+                footer.append('N/A')
             
         table_data.append(footer)
         

@@ -44,7 +44,8 @@ class DOTAMetric(BaseMetric):
                  iou_thr: float = 0.1,
                  eval_mode: str = '11points',
                  collect_device: str = 'cpu',
-                 prefix: Optional[str] = None) -> None:
+                 prefix: Optional[str] = None,
+                 square_cls: Optional[list] = None) -> None:
         super().__init__(collect_device=collect_device, prefix=prefix)
         self.iou_thrs = [iou_thrs] if isinstance(iou_thrs, float) \
             else iou_thrs
@@ -65,17 +66,49 @@ class DOTAMetric(BaseMetric):
         self.merge_patches = merge_patches
         self.iou_thr = iou_thr
         self.use_07_metric = True if eval_mode == '11points' else False
+        # 方向无意义类别 (圆形/近方形): 全局统计时单独排除, 默认 DOTA square 类
+        self.square_cls = square_cls if square_cls is not None else [1, 9, 11]
 
     # ---------------------------------------------------------
     # 1. 修改辅助计算函数：重命名并实现逻辑
     # ---------------------------------------------------------
-    def _calculate_mAngle(self, det_box, gt_box):
-        """角度偏差：不考虑尺寸，只考虑角度偏差多少 (度数制)"""
+    @staticmethod
+    def _wrap_pi(theta):
+        """角度 wrap 到 [-pi/2, pi/2)"""
+        return (theta + np.pi / 2) % np.pi - np.pi / 2
+
+    @staticmethod
+    def _longedge_normalize(box):
+        """在副本上统一长边表示: h>w 时交换 w/h、theta+=pi/2; wrap [-pi/2,pi/2)。
+        绝不原地修改输入数组, 以免影响 mAP 计算路径。"""
+        b = np.asarray(box, dtype=np.float64).copy()
+        if b.shape[0] >= 5:
+            w, h = b[2], b[3]
+            if h > w:
+                b[2], b[3] = h, w
+                b[4] = b[4] + np.pi / 2
+            b[4] = DOTAMetric._wrap_pi(b[4])
+        return b
+
+    @staticmethod
+    def _aspect_ratio(box):
+        b = np.asarray(box, dtype=np.float64)
+        w, h = abs(b[2]), abs(b[3])
+        return max(w, h) / min(w, h) if min(w, h) > 1e-6 else float('inf')
+
+    def _calculate_mAngle_raw(self, det_box, gt_box):
+        """旧定义角度偏差 (不做长边统一), 度数制"""
         a_det = det_box[4]
         a_gt = gt_box[4]
         diff = a_det - a_gt
-        # 处理 pi (180度) 周期性，归一化到 [-pi/2, pi/2)
         diff = (diff + np.pi / 2) % np.pi - np.pi / 2
+        return abs(diff * 180 / np.pi)
+
+    def _calculate_mAngle_longedge(self, det_box, gt_box):
+        """长边统一后的模 pi 最小角度差 (度数制)"""
+        d = self._longedge_normalize(det_box)
+        g = self._longedge_normalize(gt_box)
+        diff = DOTAMetric._wrap_pi(d[4] - g[4])
         return abs(diff * 180 / np.pi)
 
     def _calculate_mSize(self, det_box, gt_box):
@@ -246,6 +279,11 @@ class DOTAMetric(BaseMetric):
             total_mAngle = 0.0
             total_mSize = 0.0
             total_mIoU = 0.0
+            total_mAngle_le = 0.0
+            total_mAngle_le_slim = 0.0
+            total_slim_cnt = 0
+            total_mAngle_le_nosq = 0.0
+            total_tp_nosq = 0
 
             for iou_thr in self.iou_thrs:
                 logger.info(f'\n{"-" * 15}iou_thr: {iou_thr}{"-" * 15}')
@@ -271,27 +309,59 @@ class DOTAMetric(BaseMetric):
                             c_mAngle = 0.0
                             c_mSize = 0.0
                             c_mIoU = 0.0
+                            c_mAngle_le = 0.0
+                            c_mAngle_le_slim = 0.0
+                            c_slim_cnt = 0
                             
                             # 遍历该类别的所有 TP 三元组 (det, gt, rotated_iou)
                             for det_box, gt_box, rotated_iou in class_pairs:
-                                c_mAngle += self._calculate_mAngle(det_box, gt_box)
+                                c_mAngle += self._calculate_mAngle_raw(det_box, gt_box)
                                 c_mSize += self._calculate_mSize(det_box, gt_box)
                                 c_mIoU += rotated_iou # 直接累加底层传回的旋转IoU
+                                c_mAngle_le += self._calculate_mAngle_longedge(det_box, gt_box)
+                                # 长宽比>=1.5 的 TP 子集 (预测与 GT 都是长条)
+                                if (self._aspect_ratio(det_box) >= 1.5
+                                        and self._aspect_ratio(gt_box) >= 1.5):
+                                    c_mAngle_le_slim += self._calculate_mAngle_longedge(
+                                        det_box, gt_box)
+                                    c_slim_cnt += 1
                             
+                            n = len(class_pairs)
                             # 注入每类结果字典，供 print_map_summary 打印
-                            eval_results_list[i]['mAngle'] = c_mAngle / len(class_pairs)
-                            eval_results_list[i]['mSize'] = c_mSize / len(class_pairs)
-                            eval_results_list[i]['mIoU'] = c_mIoU / len(class_pairs)
+                            eval_results_list[i]['mAngle'] = c_mAngle / n  # 兼容旧表列 (raw)
+                            eval_results_list[i]['mAngle_raw'] = c_mAngle / n
+                            eval_results_list[i]['mAngle_longedge'] = c_mAngle_le / n
+                            eval_results_list[i]['mAngle_le_cnt'] = n
+                            eval_results_list[i]['mSize'] = c_mSize / n
+                            eval_results_list[i]['mIoU'] = c_mIoU / n
+                            if c_slim_cnt > 0:
+                                eval_results_list[i]['mAngle_le_slim'] = c_mAngle_le_slim / c_slim_cnt
+                                eval_results_list[i]['mAngle_le_slim_cnt'] = c_slim_cnt
+                            else:
+                                eval_results_list[i]['mAngle_le_slim'] = 'N/A'
+                                eval_results_list[i]['mAngle_le_slim_cnt'] = 0
                             
                             # 累加到全局平均
                             total_mAngle += c_mAngle
                             total_mSize += c_mSize
                             total_mIoU += c_mIoU
-                            total_tp_count += len(class_pairs)
+                            total_mAngle_le += c_mAngle_le
+                            total_mAngle_le_slim += c_mAngle_le_slim
+                            total_slim_cnt += c_slim_cnt
+                            total_tp_count += n
+                            # 排除方向无意义类别后的 TP 累加
+                            if i not in self.square_cls:
+                                total_mAngle_le_nosq += c_mAngle_le
+                                total_tp_nosq += n
                         else:
-                            eval_results_list[i]['mAngle'] = 0.0
-                            eval_results_list[i]['mSize'] = 0.0
-                            eval_results_list[i]['mIoU'] = 0.0
+                            eval_results_list[i]['mAngle'] = 'N/A'
+                            eval_results_list[i]['mAngle_raw'] = 'N/A'
+                            eval_results_list[i]['mAngle_longedge'] = 'N/A'
+                            eval_results_list[i]['mAngle_le_cnt'] = 0
+                            eval_results_list[i]['mAngle_le_slim'] = 'N/A'
+                            eval_results_list[i]['mAngle_le_slim_cnt'] = 0
+                            eval_results_list[i]['mSize'] = 'N/A'
+                            eval_results_list[i]['mIoU'] = 'N/A'
                     
                     first_iou_done = True
                     
@@ -312,12 +382,31 @@ class DOTAMetric(BaseMetric):
                 final_mAngle = total_mAngle / total_tp_count
                 final_mSize = total_mSize / total_tp_count
                 final_mIoU = total_mIoU / total_tp_count
+                final_mAngle_le = total_mAngle_le / total_tp_count
+                final_mAngle_le_slim = (total_mAngle_le_slim / total_slim_cnt
+                                        if total_slim_cnt > 0 else 'N/A')
+                final_mAngle_le_nosq = (total_mAngle_le_nosq / total_tp_nosq
+                                        if total_tp_nosq > 0 else 'N/A')
             else:
                 final_mAngle = final_mSize = final_mIoU = 0.0
+                final_mAngle_le = 0.0
+                final_mAngle_le_slim = 'N/A'
+                final_mAngle_le_nosq = 'N/A'
             
             eval_results['mIoU'] = round(final_mIoU, 3)
-            eval_results['mAngle'] = round(final_mAngle, 3)
+            eval_results['mAngle_raw'] = round(final_mAngle, 3)
+            eval_results['mAngle_longedge'] = round(final_mAngle_le, 3)
             eval_results['mSize'] = round(final_mSize, 3)
+            eval_results['mAngle_le_cnt'] = total_tp_count
+            if isinstance(final_mAngle_le_slim, float):
+                eval_results['mAngle_le_slim'] = round(final_mAngle_le_slim, 3)
+                eval_results['mAngle_le_slim_cnt'] = total_slim_cnt
+            else:
+                eval_results['mAngle_le_slim'] = 'N/A'
+                eval_results['mAngle_le_slim_cnt'] = 0
+            if isinstance(final_mAngle_le_nosq, float):
+                eval_results['mAngle_longedge_nosq'] = round(final_mAngle_le_nosq, 3)
+            eval_results['mAngle_tp_cnt'] = total_tp_count
             
         else:
             raise NotImplementedError

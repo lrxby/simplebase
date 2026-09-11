@@ -1002,9 +1002,12 @@ class OurWaterLoss(nn.Module):
         # 如果我们在另一个 Loss 包装器内部再次传入 reduction 参数，可能会导致：
         #   a) 装饰器参数冲突报错；
         #   b) 重复加权导致 Loss 数值错误。
-        # 解决方案：让它返回 element-wise (逐元素) 的 Loss 向量，我们在下面手动处理归一化。
+        # 注意: gwd_sigma_loss 被 mmdet 的 @weighted_loss 装饰，默认 reduction='mean' 会
+        # 直接返回标量。这里必须显式传 reduction='none' 拿到逐样本向量后再归约，
+        # 否则"先均值再按样本加权/筛选"在 weight 非空时会算错。
         # fun='log1p'：对距离进行 log(1+x) 变换，防止梯度爆炸，提升数值稳定性。
-        loss_vector = gwd_sigma_loss(sigma_p, sigma_t, fun='log1p')
+        loss_vector = gwd_sigma_loss(sigma_p, sigma_t, fun='log1p',
+                                       reduction='none')
         
         # 3. 手动进行归一化 (Weighted Mean)
         if weight is not None:
