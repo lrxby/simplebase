@@ -572,7 +572,10 @@ class SizeLoss(nn.Module):
                  norm_type='z-score',
                  target_classes=None,
                  topk=1.0,
-                 wh_ratio_balance=0.5):
+                 wh_ratio_balance=0.5,
+                 reg_space='log',
+                 loss_type='smoothl1',
+                 scale_factor=1.0):
         """
         Args:
             loss_weight (float): 总损失权重.
@@ -592,6 +595,9 @@ class SizeLoss(nn.Module):
         self.target_classes = target_classes
         self.topk = topk
         self.wh_ratio_balance = wh_ratio_balance
+        self.reg_space = reg_space
+        self.loss_type = loss_type
+        self.scale_factor = scale_factor
         self.smooth_l1 = nn.SmoothL1Loss(reduction='none', beta=beta)
 
     def _solve_single_image(self, pred_bboxes, scores, labels, img_shape=None):
@@ -607,9 +613,13 @@ class SizeLoss(nn.Module):
         # ----------------------------------------------------------
         # 【第二部分】：对数尺度映射与权重分配 (双目标版)
         # ----------------------------------------------------------
-        # 独立维度对数映射 (抛弃面积公式，直接对宽高分别取对数)
-        y_w = torch.log(w)
-        y_h = torch.log(h)
+        # 独立维度映射: 论文用线性尺寸直接回归; 工程默认用 log 空间
+        if self.reg_space == 'linear':
+            y_w = w
+            y_h = h
+        else:
+            y_w = torch.log(w)
+            y_h = torch.log(h)
 
         # 目标列向量 Y：将 w 和 h 的对数值上下拼接，构成 2N x 1 的联合目标向量
         Y = torch.cat([y_w, y_h], dim=0).unsqueeze(1)
@@ -707,9 +717,13 @@ class SizeLoss(nn.Module):
         Y_hat_w = Y_hat[:N]
         Y_hat_h = Y_hat[N:]
 
-        # 3. 分别计算宽、高维度的 SmoothL1 平滑残差
-        loss_w = self.smooth_l1(y_w, Y_hat_w)
-        loss_h = self.smooth_l1(y_h, Y_hat_h)
+        # 3. 分别计算宽、高维度的残差 (论文 Eq.7 为 L2; 工程默认 SmoothL1)
+        if self.loss_type == 'l2':
+            loss_w = F.mse_loss(y_w, Y_hat_w, reduction='none')
+            loss_h = F.mse_loss(y_h, Y_hat_h, reduction='none')
+        else:
+            loss_w = self.smooth_l1(y_w, Y_hat_w)
+            loss_h = self.smooth_l1(y_h, Y_hat_h)
 
         # 4. 融合成单样本综合透视背离残差 E_total (加入权重平衡 alpha)
         # 默认 wh_ratio_balance=0.5，等价于 E_total = 0.5*loss_w + 0.5*loss_h
@@ -757,7 +771,7 @@ class SizeLoss(nn.Module):
 
         # 单张图像直接求解
         if batch_idxs is None:
-            return self.loss_weight * self._solve_single_image(pred_bboxes, scores, labels)
+            return self.loss_weight * self.scale_factor * self._solve_single_image(pred_bboxes, scores, labels)
 
         # Batch 处理：逐张图像求解
         unique_batches = torch.unique(batch_idxs)
@@ -781,7 +795,7 @@ class SizeLoss(nn.Module):
                 valid_batches += 1.0
 
         if valid_batches > 0:
-            return self.loss_weight * (total_loss / valid_batches)
+            return self.loss_weight * self.scale_factor * (total_loss / valid_batches)
         else:
             return pred_bboxes.new_tensor(0.0)
 
@@ -805,7 +819,10 @@ class AngleLoss(nn.Module):
                  target_classes=None,
                  reduction='mean',
                  topk=1.0,
-                 warmup_epochs=0):
+                 warmup_epochs=0,
+                 neighbor_metric='euclidean_sq',
+                 eps=1e-6,
+                 scale_factor=1.0):
         super(AngleLoss, self).__init__()
         self.loss_weight = loss_weight
         self.k_radius = k_radius
@@ -814,6 +831,9 @@ class AngleLoss(nn.Module):
         self.reduction = reduction
         self.topk = topk
         self.warmup_epochs = warmup_epochs
+        self.neighbor_metric = neighbor_metric
+        self.eps = eps
+        self.scale_factor = scale_factor
         self.current_epoch = 0
 
     def _forward_single_image(self, bboxes, scores, labels, gt_ids=None):
@@ -832,10 +852,16 @@ class AngleLoss(nn.Module):
         vecs = torch.stack([torch.cos(4 * thetas), torch.sin(4 * thetas)], dim=1)
 
         # === Step 3: 构建亲和矩阵 ===
-        dist_sq = torch.cdist(centers, centers, p=2).pow(2)
-        sigmas = scales * self.k_radius
-        sigma_mat = sigmas.view(N, 1)
-        W_geo = torch.exp(-dist_sq / (2 * sigma_mat.pow(2))).detach()
+        if self.neighbor_metric == 'manhattan':
+            # 论文 Eq.2: W(i,j) = exp(-(|dx|+|dy|) / (2 * w_i * h_i))
+            dist_manh = torch.cdist(centers, centers, p=1)
+            wh_i = (wh[:, 0] * wh[:, 1]).clamp(min=1.0).view(N, 1)
+            W_geo = torch.exp(-dist_manh / (2 * wh_i)).detach()
+        else:
+            dist_sq = torch.cdist(centers, centers, p=2).pow(2)
+            sigmas = scales * self.k_radius
+            sigma_mat = sigmas.view(N, 1)
+            W_geo = torch.exp(-dist_sq / (2 * sigma_mat.pow(2))).detach()
 
         scores_detached = scores.detach().pow(self.score_alpha)
         W_conf = scores_detached.view(1, N)
@@ -863,7 +889,7 @@ class AngleLoss(nn.Module):
         # [关键修正 4]: 计算局部共识角度 target_dirs，必须脱离计算图。
         # 使得当前物体主动去向"环境均值"靠拢，而不是通过扭转环境均值来迎合自己(避免模式坍塌)。
         mean_vecs = torch.mm(W_norm, vecs.detach()) 
-        target_dirs = (mean_vecs / (mean_vecs.norm(dim=1, keepdim=True) + 1e-6)).detach()
+        target_dirs = (mean_vecs / (mean_vecs.norm(dim=1, keepdim=True) + self.eps)).detach()
         
         consistency = (vecs * target_dirs).sum(dim=1)
         chaos_score = 1.0 - consistency
@@ -946,7 +972,7 @@ class AngleLoss(nn.Module):
             warmup_w = min(1.0, (self.current_epoch + 1) / self.warmup_epochs)
         else:
             warmup_w = 1.0
-        effective_weight = warmup_w * self.loss_weight
+        effective_weight = warmup_w * self.loss_weight * self.scale_factor
 
         if self.reduction == 'mean':
             if total_valid_samples > 0:
@@ -972,9 +998,11 @@ class OurWaterLoss(nn.Module):
     Args:
         loss_weight (float): 损失函数的权重。默认为 1.0。
     """
-    def __init__(self, loss_weight=1.0):
+    def __init__(self, loss_weight=1.0, topk=1.0, scale_factor=1.0):
         super(OurWaterLoss, self).__init__()
         self.loss_weight = loss_weight
+        self.topk = topk
+        self.scale_factor = scale_factor
         
     def forward(self, pred_rboxes, pseudo_rboxes, weight=None, avg_factor=None, **kwargs):
         """
@@ -1009,14 +1037,22 @@ class OurWaterLoss(nn.Module):
         loss_vector = gwd_sigma_loss(sigma_p, sigma_t, fun='log1p',
                                        reduction='none')
         
-        # 3. 手动进行归一化 (Weighted Mean)
+        # 3. Top-K 松弛 (论文 §3.6: omitting the top-10% loss values)
+        if self.topk < 1.0:
+            num_valid = loss_vector.numel()
+            num_keep = int(max(1, math.ceil(num_valid * self.topk)))
+            if num_keep < num_valid:
+                loss_keep, _ = torch.topk(loss_vector, num_keep, largest=False)
+                loss_vector = loss_keep
+
+        # 4. 手动进行归一化 (Weighted Mean)
         if weight is not None:
             loss_vector = loss_vector * weight
-            
+
         if avg_factor is not None:
-            return self.loss_weight * loss_vector.sum() / avg_factor
+            return self.loss_weight * self.scale_factor * loss_vector.sum() / avg_factor
         else:
-            return self.loss_weight * loss_vector.mean()
+            return self.loss_weight * self.scale_factor * loss_vector.mean()
 
     def rbox2sigma_batch(self, rboxes):
         """
